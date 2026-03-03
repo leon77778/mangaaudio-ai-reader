@@ -1,0 +1,8 @@
+{
+  "name": "MangaAudio: AI Reader",
+  "description": "An intelligent manga reading application that uses Gemini AI to OCR speech bubbles and generate high-quality voiceovers for your favorite comics.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
