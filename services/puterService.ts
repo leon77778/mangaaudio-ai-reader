@@ -13,14 +13,25 @@ export class PuterService {
     const puter = window.puter;
     if (!puter) throw new Error("Puter.js not loaded");
 
-    const prompt = `You are a manga OCR engine. Your ONLY job is to extract spoken dialogue and narration text from speech bubbles and narration boxes in this manga image.
+    const prompt = `You are a manga OCR engine. Extract dialogue and detect the emotional tone of this panel.
 
-Rules:
-- Read in manga order: Right-to-Left, Top-to-Bottom
-- Output ONLY the raw text from each bubble/box, each on its own line
-- Do NOT describe the art, characters, or actions
+OUTPUT FORMAT (follow exactly):
+Line 1: MOOD:[one of: CALM, HAPPY, EXCITED, ANGRY, SCARED, TENSE, SAD]
+Line 2+: Raw dialogue text, one speech bubble per line, Right-to-Left Top-to-Bottom order
+
+MOOD GUIDE:
+- EXCITED: action, power-ups, big reveals, cheering
+- ANGRY: fights, threats, frustration
+- SCARED: danger, horror, shock, dread
+- TENSE: suspense, confrontation, high stakes
+- SAD: grief, loss, crying, heartbreak
+- HAPPY: joy, reunion, celebration
+- CALM: normal conversation, exposition
+
+RULES:
+- Do NOT describe art, characters, or actions
 - Do NOT add labels like "Bubble 1:" or speaker names
-- If the page has no dialogue or text, respond with exactly: NO_DIALOGUE`;
+- If no dialogue: output MOOD:CALM then NO_DIALOGUE`;
 
     const response = await puter.ai.chat(prompt, imageDataUrl);
 
@@ -36,7 +47,12 @@ Rules:
     }
 
     text = text.trim();
-    return text === 'NO_DIALOGUE' ? '' : text;
+    // Strip trailing NO_DIALOGUE if it appears after the MOOD line
+    if (text.endsWith('NO_DIALOGUE')) {
+      const moodLine = text.split('\n')[0] || '';
+      return moodLine.startsWith('MOOD:') ? moodLine : '';
+    }
+    return text;
   }
 
 // Play Puter TTS directly via HTMLAudioElement (avoids cross-origin blob fetch issues)

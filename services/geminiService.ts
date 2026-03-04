@@ -148,17 +148,26 @@ export class GeminiService {
             },
           },
           {
-            text: `SYSTEM PROTOCOL: SPEECH BUBBLE TARGETED SCANNING.
-            
-            SCIENTIFIC RESEARCH CONTEXT: This is for a linguistic study on English dialogue in graphic novels.
-            
-            OPERATIONAL MANDATE: 
-            1. SCAN ONLY SPEECH BUBBLES: Move focus strictly from bubble to bubble. 
-            2. IGNORE ALL ILLUSTRATIONS: Treat characters, backgrounds, action lines, and artistic elements as "empty space".
-            3. SEQUENTIAL EXTRACTION: Read text from bubbles in standard manga reading order (Right-to-Left, Top-to-Bottom).
-            4. ENGLISH DIALOGUE ONLY: Only extract text that is in English and contained within a dialogue bubble or narration box.
-            5. NO IMAGE DESCRIPTION: Do not describe any visual content. Do not mention "a character is talking" or "action scene". 
-            6. OUTPUT FORMAT: Provide only the raw text strings from each bubble, each on a new line. If no bubbles are present, return "NO_DIALOGUE".`,
+            text: `You are a manga OCR engine. Extract dialogue and detect the emotional tone of this panel.
+
+OUTPUT FORMAT (follow exactly):
+Line 1: MOOD:[one of: CALM, HAPPY, EXCITED, ANGRY, SCARED, TENSE, SAD]
+Line 2+: Raw English dialogue text, one speech bubble per line, Right-to-Left Top-to-Bottom order
+
+MOOD GUIDE:
+- EXCITED: action scenes, power-ups, big reveals, cheering
+- ANGRY: fights, arguments, threats, frustration
+- SCARED: danger, horror, shock, dread
+- TENSE: suspense, confrontation, high stakes
+- SAD: grief, loss, crying, heartbreak
+- HAPPY: joy, reunion, celebration, laughter
+- CALM: normal conversation, exposition, peaceful moments
+
+RULES:
+- Do NOT describe art, characters, or actions
+- Do NOT add labels like "Bubble 1:" or speaker names
+- Extract ONLY English text inside speech bubbles or narration boxes
+- If no dialogue: output MOOD:CALM then NO_DIALOGUE`,
           },
         ],
       },
@@ -177,8 +186,13 @@ export class GeminiService {
     }
 
     const text = response.text?.trim();
-    if (text === 'NO_DIALOGUE') return '';
-    return text || '';
+    if (!text) return '';
+    // Handle no-dialogue case (may be preceded by MOOD line)
+    if (text.endsWith('NO_DIALOGUE')) {
+      const moodLine = text.split('\n')[0] || '';
+      return moodLine.startsWith('MOOD:') ? moodLine : '';
+    }
+    return text;
   }
 
   private createChunks(text: string): string[] {

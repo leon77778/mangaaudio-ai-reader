@@ -1,10 +1,13 @@
 export type TTSProvider = 'gemini' | 'openai' | 'elevenlabs' | 'typecast' | 'puter' | 'browser';
 
+export type PanelEmotion = 'CALM' | 'HAPPY' | 'EXCITED' | 'ANGRY' | 'SCARED' | 'TENSE' | 'SAD';
+
 export interface MangaPage {
   id: string;
   url: string;
   base64?: string;
   transcription?: string;
+  emotion?: PanelEmotion; // Detected emotional tone of the panel
   audioCache?: string[]; // Stores base64 audio chunks
   status: 'idle' | 'processing' | 'ready' | 'error';
 }

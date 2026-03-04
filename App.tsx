@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MangaPage, VOICES, TTSProvider, VoiceProfile } from './types';
+import { MangaPage, VOICES, TTSProvider, VoiceProfile, PanelEmotion } from './types';
 import { GeminiService } from './services/geminiService';
 import { OpenAIService } from './services/openaiService';
 import { ElevenLabsService } from './services/elevenLabsService';
@@ -449,13 +449,25 @@ const App: React.FC = () => {
           // Puter failed — fall back to Gemini OCR
           text = await gemini.current.transcribeMangaPage(imageToProcess);
         }
+        // Parse MOOD tag from first line if present
+        let emotion: PanelEmotion | undefined;
+        const lines = text.split('\n');
+        if (lines[0]?.startsWith('MOOD:')) {
+          const moodVal = lines[0].replace('MOOD:', '').trim().toUpperCase() as PanelEmotion;
+          const validMoods: PanelEmotion[] = ['CALM','HAPPY','EXCITED','ANGRY','SCARED','TENSE','SAD'];
+          if (validMoods.includes(moodVal)) emotion = moodVal;
+          text = lines.slice(1).join('\n'); // Remove MOOD line from displayed text
+        }
+
         // Normalize ALL CAPS manga text → natural sentence case for display and TTS
         text = text
           .replace(/\b([A-Z][A-Z''\-]{1,})\b/g, (w) => w.charAt(0) + w.slice(1).toLowerCase())
           .trim();
+
         setPages(prev => prev.map((p, idx) => idx === index ? {
           ...p,
           transcription: text,
+          emotion,
           status: 'ready',
           base64: imageToProcess // Cache the base64 so we don't fetch again
         } : p));
@@ -522,22 +534,40 @@ const App: React.FC = () => {
 
   // --- AUDIO LOGIC ---
 
-  // Cleans raw manga transcription into natural flowing text for TTS
-  const cleanTextForTTS = (raw: string): string => {
-    return raw
-      // Collapse repeated punctuation first
+  // Emotion → style instruction prefix for AI TTS providers (Gemini, Puter)
+  const EMOTION_STYLE: Record<string, string> = {
+    EXCITED: 'Speak with high energy and excitement: ',
+    ANGRY:   'Speak with intensity and barely controlled anger: ',
+    SCARED:  'Speak in a fearful, trembling voice: ',
+    TENSE:   'Speak with urgency and suspense: ',
+    SAD:     'Speak in a somber, melancholic tone: ',
+    HAPPY:   'Speak in a warm, cheerful tone: ',
+    CALM:    '',
+  };
+
+  // Emotion → voice rate/pitch adjustments for browser TTS
+  const EMOTION_VOICE: Record<string, { rate: number; pitch: number }> = {
+    EXCITED: { rate: 1.08, pitch: 1.25 },
+    ANGRY:   { rate: 1.10, pitch: 0.85 },
+    SCARED:  { rate: 1.12, pitch: 1.30 },
+    TENSE:   { rate: 1.05, pitch: 1.10 },
+    SAD:     { rate: 0.83, pitch: 0.80 },
+    HAPPY:   { rate: 1.05, pitch: 1.20 },
+    CALM:    { rate: 0.92, pitch: 1.00 },
+  };
+
+  // Cleans raw manga transcription into natural flowing text for TTS.
+  // If emotion is provided and the provider uses AI TTS, prepends a style instruction.
+  const cleanTextForTTS = (raw: string, emotion?: PanelEmotion, aiStylePrefix: boolean = false): string => {
+    const cleaned = raw
       .replace(/!{2,}/g, '!')
       .replace(/\?{2,}/g, '?')
       .replace(/\.{4,}/g, '...')
-      // Ellipsis → comma pause (sounds more natural when spoken)
       .replace(/\.\.\./g, ', ')
-      // Remove markdown/formatting artifacts
       .replace(/[*_#~`]/g, '')
-      // Split into lines, trim, drop blanks
       .split('\n')
       .map(l => l.trim())
       .filter(l => l.length > 0)
-      // Merge fragmented lines — if a line doesn't end a sentence, join it to the next
       .reduce((acc: string[], line: string) => {
         if (acc.length === 0) return [line];
         const prev = acc[acc.length - 1];
@@ -551,15 +581,19 @@ const App: React.FC = () => {
       .join(' ')
       .replace(/\s{2,}/g, ' ')
       .trim();
+
+    if (aiStylePrefix && emotion && EMOTION_STYLE[emotion]) {
+      return EMOTION_STYLE[emotion] + cleaned;
+    }
+    return cleaned;
   };
 
-  const playSystemVoice = (text: string): Promise<void> => {
+  const playSystemVoice = (text: string, emotion?: PanelEmotion): Promise<void> => {
     return new Promise((resolve) => {
         const cleanText = cleanTextForTTS(text);
         const utterance = new SpeechSynthesisUtterance(cleanText);
-        
+
         const voices = window.speechSynthesis.getVoices();
-        // Use selected voice if set, otherwise prefer neural/online voices
         const preferred = voices.find(v => v.name === selectedVoice) ||
                           voices.find(v => v.name.includes('Microsoft Aria Online')) ||
                           voices.find(v => v.name.includes('Microsoft Emma Online')) ||
@@ -570,8 +604,12 @@ const App: React.FC = () => {
                           voices.find(v => v.lang.startsWith('en-US')) ||
                           voices[0];
         if (preferred) utterance.voice = preferred;
-        
-        utterance.rate = 0.92;
+
+        // Apply emotion-based rate/pitch
+        const emotionSettings = EMOTION_VOICE[emotion || 'CALM'] || EMOTION_VOICE['CALM'];
+        utterance.rate  = emotionSettings.rate;
+        utterance.pitch = emotionSettings.pitch;
+
         utterance.onend = () => resolve();
         utterance.onerror = (e) => {
             console.warn("System TTS error", e);
@@ -592,13 +630,13 @@ const App: React.FC = () => {
       const useGemini = provider === 'gemini';
 
       if (useSystem) {
-        await playSystemVoice(page.transcription || '');
+        await playSystemVoice(page.transcription || '', page.emotion);
         return;
       }
 
       // Puter plays audio directly (blob URLs are cross-origin scoped, can't be fetched)
       if (usePuter) {
-        await puterService.current.playAudio(cleanTextForTTS(page.transcription || ''));
+        await puterService.current.playAudio(cleanTextForTTS(page.transcription || '', page.emotion, true));
         return;
       }
 
@@ -606,16 +644,15 @@ const App: React.FC = () => {
           let audioChunks = page.audioCache;
           
           if (!audioChunks || audioChunks.length === 0) {
+              const ttsText = cleanTextForTTS(page.transcription || '', page.emotion);
               if (useOpenAI) {
-                audioChunks = await openai.current.generateSpeech(page.transcription || '', selectedVoice);
+                audioChunks = await openai.current.generateSpeech(ttsText, selectedVoice);
               } else if (useElevenLabs) {
-                audioChunks = await elevenlabs.current.generateSpeech(page.transcription || '', selectedVoice);
+                audioChunks = await elevenlabs.current.generateSpeech(ttsText, selectedVoice);
               } else if (useTypecast) {
-                audioChunks = await typecast.current.generateSpeech(page.transcription || '', selectedVoice);
-              } else if (usePuter) {
-                audioChunks = await puterService.current.generateSpeech(page.transcription || '', selectedVoice);
+                audioChunks = await typecast.current.generateSpeech(ttsText, selectedVoice);
               } else if (useGemini) {
-                audioChunks = await gemini.current.generateSpeech(page.transcription || '', selectedVoice);
+                audioChunks = await gemini.current.generateSpeech(ttsText, selectedVoice);
               }
               
               if (audioChunks && audioChunks.length > 0) {
@@ -641,10 +678,10 @@ const App: React.FC = () => {
           
           if (isQuota) {
               setErrorToast(`${provider.toUpperCase()} Quota Limit. Falling back to Browser Voice.`);
-              await playSystemVoice(cleanTextForTTS(page.transcription || ''));
+              await playSystemVoice(page.transcription || '', page.emotion);
           } else {
              setErrorToast("Audio Error. Switching to Browser Voice.");
-             await playSystemVoice(cleanTextForTTS(page.transcription || ''));
+             await playSystemVoice(page.transcription || '', page.emotion);
           }
       }
   };
