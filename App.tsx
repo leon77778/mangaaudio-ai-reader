@@ -522,9 +522,40 @@ const App: React.FC = () => {
 
   // --- AUDIO LOGIC ---
 
+  // Cleans raw manga transcription into natural flowing text for TTS
+  const cleanTextForTTS = (raw: string): string => {
+    return raw
+      // Collapse repeated punctuation first
+      .replace(/!{2,}/g, '!')
+      .replace(/\?{2,}/g, '?')
+      .replace(/\.{4,}/g, '...')
+      // Ellipsis → comma pause (sounds more natural when spoken)
+      .replace(/\.\.\./g, ', ')
+      // Remove markdown/formatting artifacts
+      .replace(/[*_#~`]/g, '')
+      // Split into lines, trim, drop blanks
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0)
+      // Merge fragmented lines — if a line doesn't end a sentence, join it to the next
+      .reduce((acc: string[], line: string) => {
+        if (acc.length === 0) return [line];
+        const prev = acc[acc.length - 1];
+        if (!/[.!?,]$/.test(prev)) {
+          acc[acc.length - 1] = prev + ' ' + line;
+        } else {
+          acc.push(line);
+        }
+        return acc;
+      }, [])
+      .join(' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  };
+
   const playSystemVoice = (text: string): Promise<void> => {
     return new Promise((resolve) => {
-        const cleanText = text.replace(/[*_#]/g, ' ');
+        const cleanText = cleanTextForTTS(text);
         const utterance = new SpeechSynthesisUtterance(cleanText);
         
         const voices = window.speechSynthesis.getVoices();
@@ -540,7 +571,7 @@ const App: React.FC = () => {
                           voices[0];
         if (preferred) utterance.voice = preferred;
         
-        utterance.rate = 1.0;
+        utterance.rate = 0.92;
         utterance.onend = () => resolve();
         utterance.onerror = (e) => {
             console.warn("System TTS error", e);
@@ -567,7 +598,7 @@ const App: React.FC = () => {
 
       // Puter plays audio directly (blob URLs are cross-origin scoped, can't be fetched)
       if (usePuter) {
-        await puterService.current.playAudio(page.transcription || '');
+        await puterService.current.playAudio(cleanTextForTTS(page.transcription || ''));
         return;
       }
 
@@ -610,10 +641,10 @@ const App: React.FC = () => {
           
           if (isQuota) {
               setErrorToast(`${provider.toUpperCase()} Quota Limit. Falling back to Browser Voice.`);
-              await playSystemVoice(page.transcription || '');
+              await playSystemVoice(cleanTextForTTS(page.transcription || ''));
           } else {
              setErrorToast("Audio Error. Switching to Browser Voice.");
-             await playSystemVoice(page.transcription || '');
+             await playSystemVoice(cleanTextForTTS(page.transcription || ''));
           }
       }
   };
